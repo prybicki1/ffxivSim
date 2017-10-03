@@ -4,6 +4,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 '''
 BARD CLASS
+	-Make this into a seperate file when done
+	-Superclass for all job constants?
 '''
 class Bard(object):
 	def __init__(self):
@@ -27,10 +29,8 @@ class Bard(object):
 		self.crit_chance_mod = 1
 		self.dhit_chance = 0.5
 		self.dhit_dmg_mod = 1.4
-		self.auto_time = 2500
-		self.auto_pot = 75
 
-		self.dots = []
+		self.dots = [self.skillData[0]]
 
 
 	#return a list of entries that are available for use
@@ -41,7 +41,7 @@ class Bard(object):
 				useableSkills.append(entry)
 		return useableSkills
 
-	#use a skill, return the potency dealt and time passed TODO: returned potency must account for crits
+	#use a skill, return the potency dealt and time passed
 	def useSkill(self,skillName):
 		retVal = {'potency':0,'time':0}
 		for i in range(len(self.skillData)):
@@ -81,6 +81,8 @@ class Bard(object):
 
 	#decrement timers method
 	def decrementTimers(self,timePassed):
+
+		#decrement CDs
 		for i in range(len(self.skillData)):
 			if self.skillData[i]['cd_timer'] < timePassed:
 				self.skillData[i]['cd_timer'] = 0
@@ -101,6 +103,9 @@ class Bard(object):
 
 '''
 SIMULATOR
+	-Current iteration: Command line
+	-Next: use website for skill entry
+	-Final: enable entry for a ML program
 '''
 #get the names of skills within a list of skills
 def getEntryNames(useList):
