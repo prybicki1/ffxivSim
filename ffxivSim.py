@@ -22,6 +22,8 @@ class Bard(object):
 
 		#constants TODO: get these values from gspreadsheets for more accuracy
 		self.GCD_TIME = 2500
+		self.TICK_RATE = 3000
+
 		self.sks_mod = 1
 		self.dmg_mod = 1
 		self.crit_dmg_mod = 1.45
@@ -31,6 +33,7 @@ class Bard(object):
 		self.dhit_dmg_mod = 1.4
 
 		self.dots = [self.skillData[0]]
+		self.skillData.pop(0)
 
 
 	#return a list of entries that are available for use
@@ -50,23 +53,49 @@ class Bard(object):
 					#set all gcds on cd
 					self.gcdUsed()
 					#decrement timers
-					retVal['time'] = self.decrementTimers(self.skillData[i]['cast_time'])
+					ticksAndTime = self.decrementTimers(self.skillData[i]['cast_time'])
+					retVal['time'] += ticksAndTime['time']
+					retVal['potency'] += ticksAndTime['potency']
 					#if a dot, add entry to dot table NOTE: make sure this code matches below
 					if self.skillData[i]['dot_potency'] > 0:
-						dotEntry = self.skillData[i]
-						self.dots.append(dotEntry)
+						dotIndex = -1
+						for j in range(len(self.dots)):
+							if self.dots[j]['skill_name'] == self.skillData[i]['skill_name']:
+								dotIndex = j
+						#if dot is already applied
+						if dotIndex >= 0:
+							self.dots[dotIndex]['dot_timer'] = self.dots[dotIndex]['dot_dura']
+							self.dots[dotIndex]['tick_timer'] = self.TICK_RATE
+						#if dot is not applied
+						else:
+							dotEntry = self.skillData[i]
+							dotEntry['dot_timer'] = dotEntry['dot_dura']
+							dotEntry['tick_timer'] = self.TICK_RATE
+							self.dots.append(dotEntry)
 				elif self.skillData[i]['cd'] > 0 and self.skillData[i]['cd_timer'] == 0:
 					#set on cd
 					self.skillData[i]['cd_timer'] = self.skillData[i]['cd']
 					#decrement timers
-					retVal['time'] = self.decrementTimers(self.skillData[i]['cast_time'])
-					#if a dot, add entry to dot table TODO: add the dot, reset if already there
+					ticksAndTime = self.decrementTimers(self.skillData[i]['cast_time'])
+					retVal['time'] += ticksAndTime['time']
+					retVal['potency'] += ticksAndTime['potency']
+					#if a dot, add entry to dot table, reset if already there
 					if self.skillData[i]['dot_potency'] > 0:
-						dotEntry = self.skillData[i]
-						dotEntry['dot_timer'] = dotEntry['dot_dura']
-						dotEntry['tick_timer'] = 3000
-						self.dots.append(dotEntry)
-				retVal['potency'] = self.dealDamage(self.skillData[i]['potency'])
+						dotIndex = -1
+						for j in range(len(self.dots)):
+							if self.dots[j]['skill_name'] == self.skillData[i]['skill_name']:
+								dotIndex = j
+						#if dot is already applied
+						if dotIndex >= 0:
+							self.dots[dotIndex]['dot_timer'] = self.dots[dotIndex]['dot_dura']
+							self.dots[dotIndex]['tick_timer'] = self.TICK_RATE
+						#if dot is not applied
+						else:
+							dotEntry = self.skillData[i]
+							dotEntry['dot_timer'] = dotEntry['dot_dura']
+							dotEntry['tick_timer'] = self.TICK_RATE
+							self.dots.append(dotEntry)
+				retVal['potency'] += self.dealDamage(self.skillData[i]['potency'])
 		return retVal
 
 	#do nothing, return time passed
@@ -74,21 +103,45 @@ class Bard(object):
 		minTime = 999999
 		#find the lowest cd skill
 		for i in range(len(self.skillData)):
-			if self.skillData[i]['cd_timer'] < minTime:
+			if self.skillData[i]['cd_timer'] < minTime and self.skillData[i]['cd_timer'] > 0:
 				minTime = self.skillData[i]['cd_timer']
+
+		if minTime == 999999:
+			minTime = self.GCD_TIME
 
 		return self.decrementTimers(minTime)
 
-	#decrement timers method
+	#decrement timers method TODO: return dot potency dealt
 	def decrementTimers(self,timePassed):
+		retVal = {'time':0,'potency':0}
 
-		#decrement CDs
 		for i in range(len(self.skillData)):
+			#decrement CDs
 			if self.skillData[i]['cd_timer'] < timePassed:
 				self.skillData[i]['cd_timer'] = 0
 			else:
 				self.skillData[i]['cd_timer'] -= timePassed
-		return timePassed
+
+		#dots management
+		#fallen off dots names
+		fallenOff = []
+		for i in range(len(self.dots)):
+			#decrement tick and full dot length
+			self.dots[i]['dot_timer'] -= timePassed
+			self.dots[i]['tick_timer'] -= timePassed
+			#check if the tick timer has ticked
+			if self.dots[i]['tick_timer'] <= 0:
+				retVal['potency'] += self.dealDamage(self.dots[i]['dot_potency'])
+				self.dots[i]['tick_timer'] += self.TICK_RATE
+			if self.dots[i]['dot_timer'] <= 0 and not self.dots[i]['dot_timer'] == -1:
+				fallenOff.append(self.dots[i])
+
+		#remove fallen off dots
+		for dot in fallenOff:
+			self.dots.remove(dot)
+
+		retVal['time'] += timePassed
+		return retVal
 
 	#reset GCD timer method
 	def gcdUsed(self):
@@ -119,9 +172,19 @@ total_time = 0
 #create the simulator class
 sim = Bard()
 
-while total_time < 180000:
+while total_time < 10000:
 	useList = sim.getUseableSkills()
 
+	#hacky clear screen
+	print(chr(27) + "[2J")
+
+	print '\n'
+	print 'Potency dealt:', total_potency
+	print 'Current dot timings:'
+	for dot in sim.dots:
+		print dot['skill_name'], ' Timer: ', dot['dot_timer']
+
+	print '\n'
 	print getEntryNames(useList)
 	skillName = raw_input('Enter which skill you would like to use: ')
 
@@ -130,7 +193,7 @@ while total_time < 180000:
 	if skillName != 'None':
 		skillResu = sim.useSkill(skillName)
 	else:
-		skillResu['time'] = sim.doNothing()
+		skillResu = sim.doNothing()
 
 	total_potency += skillResu['potency']
 	total_time += skillResu['time']
