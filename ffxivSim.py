@@ -1,11 +1,14 @@
 from __future__ import division
 import gspread #https://github.com/burnash/gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import random
 
 '''
 BARD CLASS
 	-Make this into a seperate file when done
 	-Superclass for all job constants?
+	-Spreadsheet accessable from here:
+		https://docs.google.com/spreadsheets/d/1Nt9yikNSAOUwf2pChTUct4Su6aeuk-9u32iVFeMeUPU/edit?usp=sharing
 '''
 class Bard(object):
 	def __init__(self):
@@ -24,10 +27,13 @@ class Bard(object):
 		self.GCD_TIME = 2500
 		self.TICK_RATE = 3000
 
+		self.CRT = 2000
+		self.DHIT = 1000
+
 		self.sks_mod = 1
 		self.dmg_mod = 1
-		self.crit_dmg_mod = 1.45
-		self.crit_chance = 0.5
+		self.crit_dmg_mod = (self.CRT-354*0.0233)+1.4483610
+		self.crit_chance = (self.CRT-354*0.0233)+4.9511233
 		self.crit_chance_mod = 1
 		self.dhit_chance = 0.5
 		self.dhit_dmg_mod = 1.4
@@ -44,61 +50,61 @@ class Bard(object):
 				useableSkills.append(entry)
 		return useableSkills
 
-	#use a skill, return the potency dealt and time passed
+	#use a skill, return the potency dealt and time passed TODO: Buffs, then Refulgent
 	def useSkill(self,skillName):
+		#we'll return the potency dealt and the time passed
 		retVal = {'potency':0,'time':0}
 		for i in range(len(self.skillData)):
 			if self.skillData[i]['skill_name'] == skillName:
+				#GCD
 				if self.skillData[i]['cd'] == 'GCD' and self.skillData[i]['cd_timer'] == 0:
 					#set all gcds on cd
 					self.gcdUsed()
+
+					#if Iron Jaws, reset both dot timers
+					if self.skillData[i]['skill_name'] == 'Iron Jaws':
+						self.IronJawsReset()
+
 					#decrement timers
 					ticksAndTime = self.decrementTimers(self.skillData[i]['cast_time'])
 					retVal['time'] += ticksAndTime['time']
 					retVal['potency'] += ticksAndTime['potency']
-					#if a dot, add entry to dot table NOTE: make sure this code matches below
-					if self.skillData[i]['dot_potency'] > 0:
-						dotIndex = -1
-						for j in range(len(self.dots)):
-							if self.dots[j]['skill_name'] == self.skillData[i]['skill_name']:
-								dotIndex = j
-						#if dot is already applied
-						if dotIndex >= 0:
-							self.dots[dotIndex]['dot_timer'] = self.dots[dotIndex]['dot_dura']
-							self.dots[dotIndex]['tick_timer'] = self.TICK_RATE
-						#if dot is not applied
-						else:
-							dotEntry = self.skillData[i]
-							dotEntry['dot_timer'] = dotEntry['dot_dura']
-							dotEntry['tick_timer'] = self.TICK_RATE
-							self.dots.append(dotEntry)
+					
+				#OGCD
 				elif self.skillData[i]['cd'] > 0 and self.skillData[i]['cd_timer'] == 0:
-					#set on cd
-					self.skillData[i]['cd_timer'] = self.skillData[i]['cd']
+					#set on cd, if BL or RoD, set both on CD
+					if self.skillData[i]['skill_name'] == 'Bloodletter' or self.skillData[i]['skill_name'] == 'Rain of Death':
+						self.setBloodAndRain()
+					else:
+						self.skillData[i]['cd_timer'] = self.skillData[i]['cd']
 					#decrement timers
 					ticksAndTime = self.decrementTimers(self.skillData[i]['cast_time'])
 					retVal['time'] += ticksAndTime['time']
 					retVal['potency'] += ticksAndTime['potency']
-					#if a dot, add entry to dot table, reset if already there
-					if self.skillData[i]['dot_potency'] > 0:
-						dotIndex = -1
-						for j in range(len(self.dots)):
-							if self.dots[j]['skill_name'] == self.skillData[i]['skill_name']:
-								dotIndex = j
-						#if dot is already applied
-						if dotIndex >= 0:
-							self.dots[dotIndex]['dot_timer'] = self.dots[dotIndex]['dot_dura']
-							self.dots[dotIndex]['tick_timer'] = self.TICK_RATE
-						#if dot is not applied
-						else:
-							dotEntry = self.skillData[i]
-							dotEntry['dot_timer'] = dotEntry['dot_dura']
-							dotEntry['tick_timer'] = self.TICK_RATE
-							self.dots.append(dotEntry)
-				retVal['potency'] += self.dealDamage(self.skillData[i]['potency'])
+
+
+				#if a dot, add entry to dot table, reset if already there
+				if self.skillData[i]['dot_potency'] > 0:
+					dotIndex = -1
+					for j in range(len(self.dots)):
+						if self.dots[j]['skill_name'] == self.skillData[i]['skill_name']:
+							dotIndex = j
+					#if dot is already applied
+					if dotIndex >= 0:
+						self.dots[dotIndex]['dot_timer'] = self.dots[dotIndex]['dot_dura']
+						self.dots[dotIndex]['tick_timer'] = self.TICK_RATE
+					#if dot is not applied
+					else:
+						dotEntry = self.skillData[i]
+						dotEntry['dot_timer'] = dotEntry['dot_dura']
+						dotEntry['tick_timer'] = self.TICK_RATE
+						self.dots.append(dotEntry)
+
+				retVal['potency'] += self.dealDamage(self.skillData[i])
+
 		return retVal
 
-	#do nothing, return time passed
+	#do nothing, returns time passed and potency dealt by dots in that time
 	def doNothing(self):
 		minTime = 999999
 		#find the lowest cd skill
@@ -111,7 +117,7 @@ class Bard(object):
 
 		return self.decrementTimers(minTime)
 
-	#decrement timers method TODO: return dot potency dealt
+	#decrement timers method, returns dot potency dealt
 	def decrementTimers(self,timePassed):
 		retVal = {'time':0,'potency':0}
 
@@ -124,21 +130,22 @@ class Bard(object):
 
 		#dots management
 		#fallen off dots names
-		fallenOff = []
+		fallenOffDots = []
 		for i in range(len(self.dots)):
 			#decrement tick and full dot length
 			self.dots[i]['dot_timer'] -= timePassed
 			self.dots[i]['tick_timer'] -= timePassed
 			#check if the tick timer has ticked
 			if self.dots[i]['tick_timer'] <= 0:
-				retVal['potency'] += self.dealDamage(self.dots[i]['dot_potency'])
+				retVal['potency'] += self.dealDamage(self.dots[i])
 				self.dots[i]['tick_timer'] += self.TICK_RATE
-			if self.dots[i]['dot_timer'] <= 0 and not self.dots[i]['dot_timer'] == -1:
-				fallenOff.append(self.dots[i])
+			if self.dots[i]['dot_timer'] <= 0:
+				fallenOffDots.append(self.dots[i])
 
 		#remove fallen off dots
-		for dot in fallenOff:
-			self.dots.remove(dot)
+		for dot in fallenOffDots:
+			if dot['skill_name'] != 'auto_attack':
+				self.dots.remove(dot)
 
 		retVal['time'] += timePassed
 		return retVal
@@ -149,10 +156,26 @@ class Bard(object):
 			if self.skillData[i]['cd'] == 'GCD':
 				self.skillData[i]['cd_timer'] = self.GCD_TIME
 
+	def setBloodAndRain(self):
+		for i in range(len(self.skillData)):
+			if self.skillData[i]['skill_name'] == 'Bloodletter' or self.skillData[i]['skill_name'] == 'Rain of Death':
+				self.skillData[i]['cd_timer'] = self.skillData[i]['cd']
+
+	def resetBloodAndRain(self):
+		for i in range(len(self.skillData)):
+			if self.skillData[i]['skill_name'] == 'Bloodletter' or self.skillData[i]['skill_name'] == 'Rain of Death':
+				self.skillData[i]['cd_timer'] = 0
+
+	def IronJawsReset(self):
+		for i in range(len(self.dots)):
+			if self.dots[i]['skill_name'] == 'Stormbite' or self.dots[i]['skill_name'] == 'Caustic Bite':
+				self.dots[i]['dot_timer'] = self.dots[i]['dot_dura']
+				self.dots[i]['tick_timer'] = self.TICK_RATE
+
 	#TODO: calculate crit and dhit, then return the true potency
 	#TODO2: repetoire stacks
-	def dealDamage(self,potency):
-		return potency
+	def dealDamage(self,skillUsed):
+		return skillUsed['potency']
 
 '''
 SIMULATOR
@@ -172,17 +195,20 @@ total_time = 0
 #create the simulator class
 sim = Bard()
 
-while total_time < 10000:
+#parse timer
+parse_length = 10000
+
+while total_time < parse_length:
 	useList = sim.getUseableSkills()
 
 	#hacky clear screen
 	print(chr(27) + "[2J")
 
-	print '\n'
 	print 'Potency dealt:', total_potency
 	print 'Current dot timings:'
 	for dot in sim.dots:
-		print dot['skill_name'], ' Timer: ', dot['dot_timer']
+		if dot['skill_name'] != 'auto_attack':
+			print dot['skill_name'], ' Timer: ', dot['dot_timer']
 
 	print '\n'
 	print getEntryNames(useList)
