@@ -23,23 +23,42 @@ class Bard(object):
 		#2d list representation of the sheet, in this case, all our abilities
 		self.skillData = sheet.get_all_records()
 
+		#crit stat data
+		sheet = client.open('FFXIV 70 Statistic Intervals').worksheet('Crit')
+
+		#make crit chart sheet
+		self.critData = sheet
+
+		#dhit stat data
+		sheet = client.open('FFXIV 70 Statistic Intervals').worksheet('Direct Hit')
+
+		#make dhit chart sheet
+		self.dhitData = sheet
+
 		#constants TODO: get these values from gspreadsheets for more accuracy
 		self.GCD_TIME = 2500
 		self.TICK_RATE = 3000
 
+		#stats
 		self.CRT = 2000
 		self.DHIT = 1000
+		self.SKS = 1000
 
 		self.sks_mod = 1
 		self.dmg_mod = 1
-		self.crit_dmg_mod = (self.CRT-354*0.0233)+1.4483610
-		self.crit_chance = (self.CRT-354*0.0233)+4.9511233
+		self.crit_dmg_mod = float(self.critData.cell(self.CRT - 361, 4).value) + 1.0
+		self.crit_chance = float(self.critData.cell(self.CRT - 361, 3).value) * 100.0
 		self.crit_chance_mod = 1
-		self.dhit_chance = 0.5
-		self.dhit_dmg_mod = 1.4
+		self.dhit_chance = float(self.dhitData.cell(self.DHIT - 361, 3).value) + 1.0
+		self.dhit_chance_mod = 1
+		self.dhit_dmg_mod = 1.25
 
+		#array of currently applied dots, start with the auto_attack entry
 		self.dots = [self.skillData[0]]
 		self.skillData.pop(0)
+
+		#array of buffs
+		self.buffs = []
 
 
 	#return a list of entries that are available for use
@@ -69,6 +88,10 @@ class Bard(object):
 					ticksAndTime = self.decrementTimers(self.skillData[i]['cast_time'])
 					retVal['time'] += ticksAndTime['time']
 					retVal['potency'] += ticksAndTime['potency']
+
+					#if straight shot, apply straight shot buff
+					if self.skillData[i]['skill_name'] == 'Straight Shot':
+						self.applyBuff(self.skillData[i])
 					
 				#OGCD
 				elif self.skillData[i]['cd'] > 0 and self.skillData[i]['cd_timer'] == 0:
@@ -82,7 +105,10 @@ class Bard(object):
 					retVal['time'] += ticksAndTime['time']
 					retVal['potency'] += ticksAndTime['potency']
 
-
+					#apply raging strikes of used
+					if self.skillData[i]['skill_name'] == 'Raging Strikes':
+						self.applyBuff(self.skillData[i])
+						
 				#if a dot, add entry to dot table, reset if already there
 				if self.skillData[i]['dot_potency'] > 0:
 					dotIndex = -1
@@ -139,6 +165,7 @@ class Bard(object):
 			if self.dots[i]['tick_timer'] <= 0:
 				retVal['potency'] += self.dealDamage(self.dots[i])
 				self.dots[i]['tick_timer'] += self.TICK_RATE
+			#check if the dot has fallen off
 			if self.dots[i]['dot_timer'] <= 0:
 				fallenOffDots.append(self.dots[i])
 
@@ -146,6 +173,27 @@ class Bard(object):
 		for dot in fallenOffDots:
 			if dot['skill_name'] != 'auto_attack':
 				self.dots.remove(dot)
+
+		#buffs management
+		#fallen off buffs names
+		fallenOffBuffs = []
+		for i in range(len(self.buffs)):
+			#decrement buff timer
+			self.buffs[i]['buff_timer'] -= timePassed
+			#check if buff has fallen off
+			if self.buffs[i]['buff_timer'] <= 0:
+				fallenOffBuffs.append(self.buffs[i])
+
+		#remove fallen off buffs
+		for buff in fallenOffBuffs:
+			#undo straight shot
+			if buff['skill_name'] == 'Straight Shot':
+				self.crit_chance_mod /= buff['crit_inc']
+			#undo RS
+			if buff['skill_name'] == 'Raging Strikes':
+				self.dmg_mod /= buff['dmg_inc']
+
+			self.buffs.remove(buff)
 
 		retVal['time'] += timePassed
 		return retVal
@@ -172,10 +220,46 @@ class Bard(object):
 				self.dots[i]['dot_timer'] = self.dots[i]['dot_dura']
 				self.dots[i]['tick_timer'] = self.TICK_RATE
 
-	#TODO: calculate crit and dhit, then return the true potency
+	def applyBuff(self, skill):
+		applied = 0
+		for i in range(len(self.buffs)):
+			if self.buffs[i]['skill_name'] == skill['skill_name']:
+				self.buffs[i]['buff_timer'] = self.buffs[i]['buff_dura']
+				applied = 1
+
+		if applied == 0:
+			skill['buff_timer'] = skill['buff_dura']
+			self.buffs.append(skill)
+
+			if skill['skill_name'] == 'Straight Shot':
+				self.crit_chance_mod *= skill['crit_inc']
+
+			if skill['skill_name'] == 'Raging Strikes':
+				self.dmg_mod *= skill['dmg_inc']
+
+
+	#calculate crit and dhit, then return the true potency
 	#TODO2: repetoire stacks
 	def dealDamage(self,skillUsed):
-		return skillUsed['potency']
+		
+		basePotency = skillUsed['potency']
+
+		potency = basePotency
+
+		#TODO: make these RNG rolls more accurate, good enough for now
+
+		#crit
+		rngRoll = random.randint(1,100)
+		if rngRoll <= (self.crit_chance * self.crit_chance_mod):
+			potency *= self.crit_dmg_mod
+
+		#dhit
+		rngRoll = random.randint(1,100)
+		if rngRoll <= (self.dhit_chance * self.dhit_chance_mod):
+			potency *= self.dhit_dmg_mod
+
+		return potency * self.dmg_mod
+
 
 '''
 SIMULATOR
@@ -196,7 +280,7 @@ total_time = 0
 sim = Bard()
 
 #parse timer
-parse_length = 10000
+parse_length = 35000 #ms
 
 while total_time < parse_length:
 	useList = sim.getUseableSkills()
@@ -208,7 +292,13 @@ while total_time < parse_length:
 	print 'Current dot timings:'
 	for dot in sim.dots:
 		if dot['skill_name'] != 'auto_attack':
-			print dot['skill_name'], ' Timer: ', dot['dot_timer']
+			print dot['skill_name'], ' Timer (s): ', dot['dot_timer'] / 1000
+
+	print '\n'
+
+	print 'Current buff timings:'
+	for buff in sim.buffs:
+		print buff['skill_name'], ' Timer (s): ', buff['buff_timer'] / 1000
 
 	print '\n'
 	print getEntryNames(useList)
