@@ -7,14 +7,16 @@ import random
 BARD CLASS
 	-Make this into a seperate file when done
 	-Superclass for all job constants?
-	-Spreadsheet accessable from here:
+	-Skill Spreadsheet accessable from here:
 		https://docs.google.com/spreadsheets/d/1Nt9yikNSAOUwf2pChTUct4Su6aeuk-9u32iVFeMeUPU/edit?usp=sharing
+	-Stat Spreadsheet accessable form here:
+		https://docs.google.com/spreadsheets/d/1ecbwAq88GPMuz7VqWcaIFlh7EqhkV5E4Lg3ftdQ0iMM/edit?usp=sharing
 '''
 class Bard(object):
 	def __init__(self):
 		#create login credentials and connect the client
 		scope = ['https://spreadsheets.google.com/feeds']
-		creds = ServiceAccountCredentials.from_json_keyfile_name('pracSheets_cred.json', scope)
+		creds = ServiceAccountCredentials.from_json_keyfile_name('brdSim_cred.json', scope)
 		client = gspread.authorize(creds)
 
 		#get the sheet as an object
@@ -245,7 +247,7 @@ class Bard(object):
 						dotEntry['dot_timer'] = dotEntry['dot_dura']
 						dotEntry['tick_timer'] = self.TICK_RATE
 						self.dots.append(dotEntry)
-						
+
 				#deal the actual damage
 				if self.barrage_used == 0:
 					retVal['potency'] += self.dealDamage(self.skillData[i])
